@@ -88,6 +88,17 @@ class JobService:
         try:
             await db.commit()
             await db.refresh(new_job)
+            try:
+                from app.api.ws_manager import ws_manager
+                await ws_manager.broadcast("job_created", {
+                    "job_id": str(new_job.id),
+                    "task_type": new_job.task_type,
+                    "priority": new_job.priority,
+                    "status": new_job.status,
+                    "scheduled_at": new_job.scheduled_at.isoformat() if new_job.scheduled_at else None,
+                })
+            except Exception:
+                pass
             return new_job, True
         except IntegrityError:
             # Handle concurrent race condition for the same idempotency key
@@ -217,6 +228,14 @@ class JobService:
         db.add(audit_event)
         await db.commit()
         await db.refresh(job)
+        try:
+            from app.api.ws_manager import ws_manager
+            await ws_manager.broadcast("job_retried", {
+                "job_id": str(job.id),
+                "status": job.status,
+            })
+        except Exception:
+            pass
         return job
 
     @staticmethod
@@ -258,5 +277,13 @@ class JobService:
         db.add(audit_event)
         await db.commit()
         await db.refresh(job)
+        try:
+            from app.api.ws_manager import ws_manager
+            await ws_manager.broadcast("job_cancelled", {
+                "job_id": str(job.id),
+                "status": job.status,
+            })
+        except Exception:
+            pass
         return job
 

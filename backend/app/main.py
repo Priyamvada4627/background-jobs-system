@@ -46,4 +46,5 @@ async def root():
         "version": settings.VERSION,
         "status": "running",
         "documentation": "/docs",
+        "dashboard": "/dashboard",
     }

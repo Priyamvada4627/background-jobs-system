@@ -127,6 +127,16 @@ class WorkerEngine:
                     worker.last_heartbeat_at = now
 
                 await db.commit()
+                try:
+                    from app.api.ws_manager import ws_manager
+                    await ws_manager.broadcast("job_running", {
+                        "job_id": str(job.id),
+                        "worker_id": self.worker_id,
+                        "status": "RUNNING",
+                        "attempt_count": job.attempt_count,
+                    })
+                except Exception:
+                    pass
                 return job
 
 
@@ -186,6 +196,16 @@ class WorkerEngine:
             worker.last_heartbeat_at = now
 
         await db.commit()
+        try:
+            from app.api.ws_manager import ws_manager
+            await ws_manager.broadcast("job_running", {
+                "job_id": str(job.id),
+                "worker_id": self.worker_id,
+                "status": "RUNNING",
+                "attempt_count": job.attempt_count,
+            })
+        except Exception:
+            pass
         return job
 
 
@@ -364,7 +384,17 @@ class WorkerEngine:
             worker.last_heartbeat_at = finished_at
 
         await db.commit()
-
+        try:
+            from app.api.ws_manager import ws_manager
+            await ws_manager.broadcast("job_finished", {
+                "job_id": str(job.id),
+                "status": job.status,
+                "outcome": outcome,
+                "attempt_count": job.attempt_count,
+                "duration_ms": duration_ms,
+            })
+        except Exception:
+            pass
 
         # 7. Release Redis lease if using Redis queue
         if self.redis_queue is not None:

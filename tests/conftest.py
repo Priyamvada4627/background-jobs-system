@@ -77,3 +77,15 @@ async def async_client(test_engine):
         yield client
 
     app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def fake_redis():
+    """Provides an isolated in-memory asynchronous Redis client with Lua script support."""
+    import fakeredis.aioredis
+    server = fakeredis.FakeServer()
+    client = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
+    yield client
+    await client.flushall()
+    await client.aclose()
+

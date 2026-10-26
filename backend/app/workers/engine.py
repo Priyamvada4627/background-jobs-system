@@ -18,6 +18,8 @@ from app.models.worker import Worker
 from app.services.state_machine import JobStatus, AttemptOutcome
 from app.tasks.registry import get_task_handler, execute_task_handler, UnregisteredTaskError, list_registered_tasks
 from app.db.session import get_sessionmaker
+from app.queue.redis_queue import RedisQueue
+from app.core.config import settings
 
 
 class WorkerEngine:
@@ -25,12 +27,15 @@ class WorkerEngine:
         self,
         worker_id: Optional[str] = None,
         session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
+        redis_queue: Optional[RedisQueue] = None,
     ):
         self.worker_id = worker_id or f"worker-{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
         self.session_factory = session_factory or get_sessionmaker()
+        self.redis_queue = redis_queue
         self.capabilities = list_registered_tasks()
         self.hostname = socket.gethostname()
         self.pid = os.getpid()
+
 
     async def register_worker(self, db: AsyncSession) -> Worker:
         """Registers or updates this worker's record in the database."""
@@ -63,12 +68,66 @@ class WorkerEngine:
     async def claim_job(self, db: AsyncSession) -> Optional[Job]:
         """
         Atomically queries and claims a single QUEUED job whose scheduled_at <= NOW().
-        Prioritizes HIGH over DEFAULT over LOW, then oldest scheduled_at.
-        Updates job status to RUNNING and increments attempt_count.
+        If redis_queue is configured, claims from Redis priority lanes using an atomic Lua script
+        with lease acquisition and safe inconsistency recovery.
+        Otherwise falls back to direct database query.
         """
         now = datetime.now(timezone.utc)
 
-        # Priority ordering: HIGH (1) -> DEFAULT (2) -> LOW (3)
+        # 1. Redis-backed priority queue claiming
+        if self.redis_queue is not None:
+            while True:
+                claimed_pop = await self.redis_queue.claim_job_atomic(
+                    worker_id=self.worker_id,
+                    lease_ttl_seconds=settings.WORKER_LEASE_TTL_SECONDS,
+                )
+                if claimed_pop is None:
+                    return None
+
+                job_id_str, queue_name = claimed_pop
+                job_uuid = uuid.UUID(job_id_str)
+
+                # Fetch canonical job state from PostgreSQL
+                res = await db.execute(select(Job).where(Job.id == job_uuid))
+                job = res.scalar_one_or_none()
+
+                # Inconsistency check: if job missing or not in QUEUED state, release lease and discard
+                if not job or job.status != JobStatus.QUEUED.value:
+                    await self.redis_queue.release_lease(job_uuid, self.worker_id)
+                    continue
+
+                # Atomically transition to RUNNING in database
+                job.status = JobStatus.RUNNING.value
+                job.attempt_count += 1
+                job.updated_at = now
+
+                audit_event = JobEvent(
+                    job_id=job.id,
+                    event_type="STATE_CHANGED_TO_RUNNING",
+                    details_json={
+                        "from_state": "QUEUED",
+                        "to_state": "RUNNING",
+                        "attempt_number": job.attempt_count,
+                        "worker_id": self.worker_id,
+                        "claimed_from_queue": queue_name,
+                    },
+                    actor=self.worker_id,
+                    created_at=now,
+                )
+                db.add(audit_event)
+
+                stmt_w = select(Worker).where(Worker.worker_id == self.worker_id)
+                res_w = await db.execute(stmt_w)
+                worker = res_w.scalar_one_or_none()
+                if worker:
+                    worker.current_job_id = job.id
+                    worker.last_heartbeat_at = now
+
+                await db.commit()
+                await db.refresh(job)
+                return job
+
+        # 2. Direct database query fallback
         priority_order = case(
             (Job.priority == "HIGH", 1),
             (Job.priority == "DEFAULT", 2),
@@ -86,25 +145,21 @@ class WorkerEngine:
             .limit(1)
         )
 
-        # Attempt to use FOR UPDATE SKIP LOCKED if supported (e.g. PostgreSQL)
         try:
             locked_query = query.with_for_update(skip_locked=True)
             result = await db.execute(locked_query)
             job = result.scalar_one_or_none()
         except OperationalError:
-            # Dialect doesn't support with_for_update / skip_locked (e.g. SQLite in unit tests)
             result = await db.execute(query)
             job = result.scalar_one_or_none()
 
         if not job:
             return None
 
-        # Atomically transition to RUNNING
         job.status = JobStatus.RUNNING.value
         job.attempt_count += 1
         job.updated_at = now
 
-        # Record audit event
         audit_event = JobEvent(
             job_id=job.id,
             event_type="STATE_CHANGED_TO_RUNNING",
@@ -119,7 +174,6 @@ class WorkerEngine:
         )
         db.add(audit_event)
 
-        # Update worker current_job_id
         stmt_w = select(Worker).where(Worker.worker_id == self.worker_id)
         res_w = await db.execute(stmt_w)
         worker = res_w.scalar_one_or_none()
@@ -130,6 +184,7 @@ class WorkerEngine:
         await db.commit()
         await db.refresh(job)
         return job
+
 
     async def execute_job(self, db: AsyncSession, job: Job) -> JobAttempt:
         """
@@ -235,7 +290,13 @@ class WorkerEngine:
         await db.commit()
         await db.refresh(attempt)
         await db.refresh(job)
+
+        # 7. Release Redis lease if using Redis queue
+        if self.redis_queue is not None:
+            await self.redis_queue.release_lease(job.id, self.worker_id)
+
         return attempt
+
 
     async def run_once(self) -> Optional[JobAttempt]:
         """Runs a single claim-and-execute cycle. Returns the attempt or None if no jobs are ready."""

@@ -84,8 +84,9 @@ Implementation follows a staged 13-phase plan documented in [docs/implementation
 
 - **Phase 0**: Repository Discovery and Plan *(Completed)*
 - **Phase 1**: Project Foundation and Local Environment *(Completed)*
-- **Phase 2**: Schema and Job API *(Up next)*
-- **Phase 3**: Registered Task Handlers and Single Worker Process
+- **Phase 2**: Schema and Job API *(Completed)*
+- **Phase 3**: Registered Task Handlers and Single Worker Process *(Up next)*
+
 - **Phase 4**: Redis Queue and Atomic Claiming
 - **Phase 5**: Outbox Publisher and Consistency Recovery
 - **Phase 6**: Retries, Backoff, and Dead-Letter Queue

@@ -18,22 +18,28 @@ from app.db.session import get_db  # noqa: E402
 from app.models import Job, JobAttempt, JobSchedule, OutboxEvent, Worker, JobEvent  # noqa: F401, E402
 
 
+from sqlalchemy import text
+from sqlalchemy.pool import AsyncAdaptedQueuePool
+
+
 @pytest_asyncio.fixture(loop_scope="function")
-async def test_engine():
-    """Creates an isolated in-memory SQLite database engine for testing."""
+async def test_engine(tmp_path):
+    """Creates an isolated temporary SQLite database engine with WAL mode for concurrency."""
+    db_file = tmp_path / "test.db"
     engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+        f"sqlite+aiosqlite:///{db_file}",
+        connect_args={"check_same_thread": False, "timeout": 30.0},
+        poolclass=AsyncAdaptedQueuePool,
         echo=False,
     )
+
     async with engine.begin() as conn:
+        await conn.execute(text("PRAGMA journal_mode=WAL;"))
+        await conn.execute(text("PRAGMA busy_timeout=5000;"))
         await conn.run_sync(Base.metadata.create_all)
 
     yield engine
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
 
 

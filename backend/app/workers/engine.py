@@ -36,10 +36,10 @@ class WorkerEngine:
         self.hostname = socket.gethostname()
         self.pid = os.getpid()
 
-
     async def register_worker(self, db: AsyncSession) -> Worker:
         """Registers or updates this worker's record in the database."""
         now = datetime.now(timezone.utc)
+
         stmt = select(Worker).where(Worker.worker_id == self.worker_id)
         res = await db.execute(stmt)
         worker = res.scalar_one_or_none()
@@ -64,6 +64,8 @@ class WorkerEngine:
         await db.commit()
         await db.refresh(worker)
         return worker
+
+
 
     async def claim_job(self, db: AsyncSession) -> Optional[Job]:
         """
@@ -124,8 +126,9 @@ class WorkerEngine:
                     worker.last_heartbeat_at = now
 
                 await db.commit()
-                await db.refresh(job)
                 return job
+
+
 
         # 2. Direct database query fallback
         priority_order = case(
@@ -182,8 +185,9 @@ class WorkerEngine:
             worker.last_heartbeat_at = now
 
         await db.commit()
-        await db.refresh(job)
         return job
+
+
 
 
     async def execute_job(self, db: AsyncSession, job: Job) -> JobAttempt:
@@ -288,14 +292,14 @@ class WorkerEngine:
             worker.last_heartbeat_at = finished_at
 
         await db.commit()
-        await db.refresh(attempt)
-        await db.refresh(job)
+
 
         # 7. Release Redis lease if using Redis queue
         if self.redis_queue is not None:
             await self.redis_queue.release_lease(job.id, self.worker_id)
 
         return attempt
+
 
 
     async def run_once(self) -> Optional[JobAttempt]:

@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 from app.models.job import Job
 from app.models.job_attempt import JobAttempt
+from app.models.job_event import JobEvent
 from app.queue.redis_queue import RedisQueue
 from app.workers.engine import WorkerEngine
 from app.services.state_machine import JobStatus
@@ -64,14 +65,16 @@ async def test_competing_workers_no_duplicate_claims(test_engine, fake_redis):
 
     # 3. Concurrent worker execution loop
     async def worker_runner(w: WorkerEngine):
-        idle_cycles = 0
-        while idle_cycles < 3:
+        consecutive_empty = 0
+        while consecutive_empty < 5:
             attempt = await w.run_once()
             if attempt is None:
-                idle_cycles += 1
-                await asyncio.sleep(0.01)
+                depths = await redis_queue.get_all_queue_depths()
+                if depths["TOTAL"] == 0:
+                    consecutive_empty += 1
+                await asyncio.sleep(0.02)
             else:
-                idle_cycles = 0
+                consecutive_empty = 0
 
     # Run all 5 workers concurrently
     await asyncio.gather(*[worker_runner(w) for w in workers])

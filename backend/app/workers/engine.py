@@ -203,6 +203,22 @@ class WorkerEngine:
         error_message: Optional[str] = None
         traceback_text: Optional[str] = None
 
+        heartbeat_task = None
+        if self.redis_queue is not None:
+            async def _heartbeat_loop():
+                while True:
+                    try:
+                        await asyncio.sleep(settings.WORKER_HEARTBEAT_INTERVAL_SECONDS)
+                        await self.redis_queue.renew_lease(
+                            job.id, self.worker_id, ttl_seconds=settings.WORKER_LEASE_TTL_SECONDS
+                        )
+                    except asyncio.CancelledError:
+                        break
+                    except Exception:
+                        pass
+
+            heartbeat_task = asyncio.create_task(_heartbeat_loop())
+
         try:
             # 1. Retrieve registered task handler
             handler = get_task_handler(job.task_type)
@@ -232,6 +248,14 @@ class WorkerEngine:
             error_message = str(exc)
             traceback_text = traceback.format_exc()
 
+        finally:
+            if heartbeat_task is not None:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+
         finished_at = datetime.now(timezone.utc)
         duration_ms = int((finished_at - started_at).total_seconds() * 1000)
 
@@ -251,7 +275,35 @@ class WorkerEngine:
         )
         db.add(attempt)
 
-        # 4. Update Job terminal / retry status
+        # 4. Fencing token check: verify job is still in RUNNING status with our attempt_count
+        stmt_check = select(Job).where(
+            Job.id == job.id,
+            Job.status == JobStatus.RUNNING.value,
+            Job.attempt_count == job.attempt_count,
+        )
+        res_check = await db.execute(stmt_check)
+        active_job = res_check.scalar_one_or_none()
+
+        if not active_job:
+            # Fenced out! Zombie worker aborted
+            audit_event = JobEvent(
+                job_id=job.id,
+                event_type="ZOMBIE_WORKER_FENCED_OUT",
+                details_json={
+                    "worker_id": self.worker_id,
+                    "attempt_number": job.attempt_count,
+                    "reason": "Lease expired and job reaped or reassigned",
+                },
+                actor=self.worker_id,
+                created_at=finished_at,
+            )
+            db.add(audit_event)
+            await db.commit()
+            if self.redis_queue is not None:
+                await self.redis_queue.release_lease(job.id, self.worker_id)
+            return attempt
+
+        # 5. Update Job terminal / retry status
         job.updated_at = finished_at
         extra_details: Dict[str, Any] = {}
 

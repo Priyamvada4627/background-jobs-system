@@ -256,6 +256,11 @@ class WorkerEngine:
                 except asyncio.CancelledError:
                     pass
 
+        if self.redis_queue is not None and await self.redis_queue.is_cancelled(job.id):
+            outcome = AttemptOutcome.CANCELLED.value
+            error_type = "CancelledError"
+            error_message = "Task execution was cancelled cooperatively by client."
+
         finished_at = datetime.now(timezone.utc)
         duration_ms = int((finished_at - started_at).total_seconds() * 1000)
 
@@ -278,7 +283,7 @@ class WorkerEngine:
         # 4. Fencing token check: verify job is still in RUNNING status with our attempt_count
         stmt_check = select(Job).where(
             Job.id == job.id,
-            Job.status == JobStatus.RUNNING.value,
+            Job.status.in_([JobStatus.RUNNING.value, JobStatus.CANCELLED.value]),
             Job.attempt_count == job.attempt_count,
         )
         res_check = await db.execute(stmt_check)
@@ -312,6 +317,11 @@ class WorkerEngine:
             job.result_json = result if isinstance(result, dict) else {"result": result}
             job.last_error = None
             next_event_type = "JOB_SUCCEEDED"
+        elif outcome == AttemptOutcome.CANCELLED.value:
+            job.status = JobStatus.CANCELLED.value
+            job.last_error = "Task execution was cancelled by client"
+            next_event_type = "JOB_CANCELLED"
+            extra_details = {"reason": "COOPERATIVE_CANCELLATION"}
         else:
             job.last_error = f"{error_type}: {error_message}"
             if job.attempt_count >= job.max_retries or error_type == "UnregisteredTaskError":

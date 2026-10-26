@@ -218,3 +218,45 @@ class JobService:
         await db.commit()
         await db.refresh(job)
         return job
+
+    @staticmethod
+    async def cancel_job(db: AsyncSession, job_id: uuid.UUID, redis_queue: Optional[Any] = None) -> Job:
+        """
+        Cancels a job in QUEUED, RETRY_WAIT, or RUNNING status:
+        - If RUNNING, sets a Redis cancellation flag to notify cooperative workers.
+        - Transitions job to CANCELLED in database.
+        - Emits an immutable audit event in job_events.
+        """
+        job = await JobService.get_job(db, job_id)
+        if not job:
+            raise ValueError(f"Job with ID '{job_id}' not found.")
+
+        if job.status in [JobStatus.SUCCEEDED.value, JobStatus.DEAD.value, JobStatus.CANCELLED.value]:
+            raise ValueError(f"Cannot cancel job in terminal state '{job.status}'.")
+
+        now = datetime.now(timezone.utc)
+        from_status = job.status
+
+        # If RUNNING, notify via Redis cooperative cancellation flag
+        if job.status == JobStatus.RUNNING.value and redis_queue is not None:
+            await redis_queue.set_cancellation_flag(job.id)
+
+        job.status = JobStatus.CANCELLED.value
+        job.updated_at = now
+
+        audit_event = JobEvent(
+            job_id=job.id,
+            event_type="JOB_CANCELLED",
+            details_json={
+                "from_state": from_status,
+                "to_state": "CANCELLED",
+                "reason": "CLIENT_REQUESTED_CANCELLATION",
+            },
+            actor="CLIENT",
+            created_at=now,
+        )
+        db.add(audit_event)
+        await db.commit()
+        await db.refresh(job)
+        return job
+

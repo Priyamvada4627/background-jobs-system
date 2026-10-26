@@ -123,3 +123,32 @@ async def retry_job(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(err),
         )
+
+
+@router.post(
+    "/{job_id}/cancel",
+    response_model=JobResponse,
+    summary="Cancel a job",
+    description="Transitions a QUEUED, RETRY_WAIT, or RUNNING job to CANCELLED and signals cooperative workers.",
+)
+async def cancel_job(
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> JobResponse:
+    try:
+        from app.queue.redis_queue import RedisQueue
+        from app.queue.connection import get_redis_client
+        redis_queue = RedisQueue(client=get_redis_client())
+        cancelled_job = await JobService.cancel_job(db, job_id, redis_queue=redis_queue)
+        return JobResponse.model_validate(cancelled_job)
+    except ValueError as err:
+        if "not found" in str(err).lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(err),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(err),
+        )
+

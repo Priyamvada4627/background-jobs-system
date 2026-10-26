@@ -195,3 +195,15 @@ class RedisQueue:
         keys = [self.QUEUE_HIGH, self.QUEUE_DEFAULT, self.QUEUE_LOW]
         for key in keys:
             await self.client.delete(key)
+
+    async def set_cancellation_flag(self, job_id: str | uuid.UUID, ttl_seconds: int = 3600) -> None:
+        """Sets a cooperative cancellation flag in Redis for a running job."""
+        key = f"cancellation:job:{job_id}"
+        await self.client.set(key, "1", ex=ttl_seconds)
+
+    async def is_cancelled(self, job_id: str | uuid.UUID) -> bool:
+        """Checks if a cooperative cancellation flag has been set for a job."""
+        key = f"cancellation:job:{job_id}"
+        val = await self.client.get(key)
+        return bool(val is not None)
+

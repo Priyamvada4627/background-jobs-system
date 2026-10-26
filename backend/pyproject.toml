@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "background-job-system"
+version = "0.1.0"
+description = "A distributed, failure-resilient task queue and execution engine"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Background Job System Team" }
+]
+dependencies = [
+    "fastapi>=0.115.0,<0.116.0",
+    "uvicorn[standard]>=0.30.0,<0.33.0",
+    "pydantic>=2.8.0,<3.0.0",
+    "pydantic-settings>=2.4.0,<3.0.0",
+    "sqlalchemy[asyncio]>=2.0.30,<2.2.0",
+    "asyncpg>=0.29.0,<0.33.0",
+    "psycopg2-binary>=2.9.9,<2.10.0",
+    "alembic>=1.13.0,<1.21.0",
+
+    "redis[asyncio]>=5.0.0,<5.3.0",
+    "croniter>=2.0.0,<3.1.0",
+    "python-dotenv>=1.0.0,<1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0,<8.4.0",
+    "pytest-asyncio>=0.23.0,<0.25.0",
+    "pytest-mock>=3.14.0",
+    "httpx>=0.27.0,<0.29.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["backend"]
+addopts = "-v --tb=short"
+
+[tool.setuptools.packages.find]
+where = ["backend"]

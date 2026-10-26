@@ -396,6 +396,13 @@ class WorkerEngine:
         except Exception:
             pass
 
+        try:
+            from app.core.metrics import JOB_EXECUTIONS_TOTAL, JOB_EXECUTION_DURATION_SECONDS
+            JOB_EXECUTIONS_TOTAL.labels(task_type=job.task_type, outcome=outcome).inc()
+            JOB_EXECUTION_DURATION_SECONDS.labels(task_type=job.task_type).observe(duration_ms / 1000.0)
+        except Exception:
+            pass
+
         # 7. Release Redis lease if using Redis queue
         if self.redis_queue is not None:
             await self.redis_queue.release_lease(job.id, self.worker_id)

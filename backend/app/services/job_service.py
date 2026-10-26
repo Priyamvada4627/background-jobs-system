@@ -99,6 +99,13 @@ class JobService:
                 })
             except Exception:
                 pass
+
+            try:
+                from app.core.metrics import JOB_SUBMISSIONS_TOTAL
+                JOB_SUBMISSIONS_TOTAL.labels(task_type=new_job.task_type, priority=new_job.priority).inc()
+            except Exception:
+                pass
+
             return new_job, True
         except IntegrityError:
             # Handle concurrent race condition for the same idempotency key

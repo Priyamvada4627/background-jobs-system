@@ -10,7 +10,7 @@ from app.models.outbox_event import OutboxEvent
 from app.models.job_event import JobEvent
 from app.models.job_attempt import JobAttempt
 from app.schemas.job import JobCreate
-from app.services.state_machine import JobStatus
+from app.services.state_machine import JobStatus, validate_transition
 
 
 class JobService:
@@ -158,3 +158,63 @@ class JobService:
         )
         result = await db.execute(stmt)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def retry_job(db: AsyncSession, job_id: uuid.UUID) -> Job:
+        """
+        Manually revives a DEAD job:
+        - Validates the job exists and is in DEAD state.
+        - Transitions state to QUEUED.
+        - Resets scheduled_at = NOW(), attempt_count = 0, last_error = None.
+        - Emits an atomic OutboxEvent to guarantee re-enqueueing to Redis.
+        - Emits an immutable JobEvent audit record with actor='OPERATOR'.
+        """
+        job = await JobService.get_job(db, job_id)
+        if not job:
+            raise ValueError(f"Job with ID '{job_id}' not found.")
+
+        # Validates transition from current status to QUEUED (allowed from DEAD)
+        validate_transition(job.status, JobStatus.QUEUED, job_id=job.id)
+
+        now = datetime.now(timezone.utc)
+        from_status = job.status
+        job.status = JobStatus.QUEUED.value
+        job.scheduled_at = now
+        job.attempt_count = 0
+        job.last_error = None
+        job.updated_at = now
+
+        # Create outbox event to push to Redis
+        outbox_entry = OutboxEvent(
+            id=uuid.uuid4(),
+            job_id=job.id,
+            event_type="JOB_RETRIED",
+            payload_json={
+                "job_id": str(job.id),
+                "task_type": job.task_type,
+                "priority": job.priority,
+                "scheduled_at": now.isoformat(),
+            },
+            created_at=now,
+            published_at=None,
+            publish_attempts=0,
+        )
+
+        # Create audit trail event
+        audit_event = JobEvent(
+            job_id=job.id,
+            event_type="STATE_CHANGED_TO_QUEUED",
+            details_json={
+                "from_state": from_status,
+                "to_state": "QUEUED",
+                "reason": "MANUAL_RETRY",
+            },
+            actor="OPERATOR",
+            created_at=now,
+        )
+
+        db.add(outbox_entry)
+        db.add(audit_event)
+        await db.commit()
+        await db.refresh(job)
+        return job

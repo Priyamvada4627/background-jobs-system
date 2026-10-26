@@ -5,7 +5,7 @@ import uuid
 import time
 import asyncio
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, case, func
@@ -16,6 +16,7 @@ from app.models.job_attempt import JobAttempt
 from app.models.job_event import JobEvent
 from app.models.worker import Worker
 from app.services.state_machine import JobStatus, AttemptOutcome
+from app.services.retry_policy import calculate_backoff_delay
 from app.tasks.registry import get_task_handler, execute_task_handler, UnregisteredTaskError, list_registered_tasks
 from app.db.session import get_sessionmaker
 from app.queue.redis_queue import RedisQueue
@@ -252,6 +253,7 @@ class WorkerEngine:
 
         # 4. Update Job terminal / retry status
         job.updated_at = finished_at
+        extra_details: Dict[str, Any] = {}
 
         if outcome == AttemptOutcome.SUCCEEDED.value:
             job.status = JobStatus.SUCCEEDED.value
@@ -263,9 +265,16 @@ class WorkerEngine:
             if job.attempt_count >= job.max_retries or error_type == "UnregisteredTaskError":
                 job.status = JobStatus.DEAD.value
                 next_event_type = "JOB_DEAD"
+                extra_details = {}
             else:
+                delay_seconds = calculate_backoff_delay(job.attempt_count)
+                job.scheduled_at = finished_at + timedelta(seconds=delay_seconds)
                 job.status = JobStatus.RETRY_WAIT.value
                 next_event_type = "JOB_RETRY_WAIT"
+                extra_details = {
+                    "retry_delay_seconds": delay_seconds,
+                    "scheduled_at": job.scheduled_at.isoformat(),
+                }
 
         # 5. Record audit event
         audit_event = JobEvent(
@@ -277,6 +286,7 @@ class WorkerEngine:
                 "duration_ms": duration_ms,
                 "worker_id": self.worker_id,
                 "error": error_message,
+                **extra_details,
             },
             actor=self.worker_id,
             created_at=finished_at,

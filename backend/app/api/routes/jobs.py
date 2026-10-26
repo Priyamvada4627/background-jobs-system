@@ -98,3 +98,28 @@ async def get_job_attempts(
         )
     attempts = await JobService.get_job_attempts(db, job_id)
     return [JobAttemptResponse.model_validate(att) for att in attempts]
+
+
+@router.post(
+    "/{job_id}/retry",
+    response_model=JobResponse,
+    summary="Manually retry a dead job",
+    description="Revives a job in DEAD status, resetting its attempts and enqueueing an outbox event to re-process.",
+)
+async def retry_job(
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> JobResponse:
+    try:
+        retried_job = await JobService.retry_job(db, job_id)
+        return JobResponse.model_validate(retried_job)
+    except ValueError as err:
+        if "not found" in str(err).lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(err),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(err),
+        )

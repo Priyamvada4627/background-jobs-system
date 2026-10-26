@@ -24,12 +24,14 @@ if str(backend_path) not in sys.path:
     sys.path.insert(0, str(backend_path))
 
 from app.core.config import settings
+from app.models import Base
 
 # Dynamically set the database sync URL from environment settings
 config.set_main_option("sqlalchemy.url", settings.get_database_sync_url())
 
-# add your model's MetaData object here for 'autogenerate' support
-target_metadata = None
+# Set target metadata for autogenerate support
+target_metadata = Base.metadata
+
 
 
 

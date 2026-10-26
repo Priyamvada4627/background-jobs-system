@@ -71,7 +71,13 @@ $env:PYTHONPATH="backend"
 - Liveness Probe: `GET http://localhost:8000/health`
 - Readiness Probe: `GET http://localhost:8000/health/ready` (validates PostgreSQL and Redis connection)
 
-### 6. Run Test Suite
+### 6. Run Worker Process
+```powershell
+$env:PYTHONPATH="backend"
+.\.venv\Scripts\python.exe -m app.workers.cli --poll-interval 1.0
+```
+
+### 7. Run Test Suite
 ```powershell
 .\.venv\Scripts\pytest.exe -v
 ```
@@ -85,9 +91,8 @@ Implementation follows a staged 13-phase plan documented in [docs/implementation
 - **Phase 0**: Repository Discovery and Plan *(Completed)*
 - **Phase 1**: Project Foundation and Local Environment *(Completed)*
 - **Phase 2**: Schema and Job API *(Completed)*
-- **Phase 3**: Registered Task Handlers and Single Worker Process *(Up next)*
-
-- **Phase 4**: Redis Queue and Atomic Claiming
+- **Phase 3**: Registered Task Handlers and Single Worker Process *(Completed)*
+- **Phase 4**: Redis Queue and Atomic Claiming *(Up next)*
 - **Phase 5**: Outbox Publisher and Consistency Recovery
 - **Phase 6**: Retries, Backoff, and Dead-Letter Queue
 - **Phase 7**: Delayed and Recurring Jobs
@@ -96,4 +101,3 @@ Implementation follows a staged 13-phase plan documented in [docs/implementation
 - **Phase 10**: Frontend Dashboard and WebSockets
 - **Phase 11**: Observability and Benchmarks
 - **Phase 12**: Hardening, CI, and Documentation
-

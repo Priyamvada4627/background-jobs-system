@@ -68,11 +68,14 @@ class Settings(BaseSettings):
     def get_database_url(self) -> str:
         """Returns the async database URL, dynamically constructing or adapting it for asyncpg."""
         if self.DATABASE_URL:
-            url = self.DATABASE_URL
+            url = self.DATABASE_URL.strip()
             if url.startswith("postgres://"):
                 url = url.replace("postgres://", "postgresql+asyncpg://", 1)
             elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
                 url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            # asyncpg accepts ssl=..., NOT sslmode=...
+            # Neon and other providers include ?sslmode=require which throws TypeError in asyncpg
+            url = url.replace("sslmode=", "ssl=")
             return url
         return (
             f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
@@ -83,13 +86,19 @@ class Settings(BaseSettings):
         """Returns the sync database URL (for Alembic migrations), dynamically constructing or adapting for psycopg2."""
         raw_url = self.DATABASE_SYNC_URL or self.DATABASE_URL
         if raw_url:
-            url = raw_url
+            url = raw_url.strip()
             if url.startswith("postgres://"):
                 url = url.replace("postgres://", "postgresql+psycopg2://", 1)
             elif url.startswith("postgresql+asyncpg://"):
                 url = url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
             elif url.startswith("postgresql://") and not url.startswith("postgresql+psycopg2://"):
                 url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+            # psycopg2 (Alembic) uses sslmode=..., NOT ssl=...
+            if "ssl=require" in url and "sslmode=" not in url:
+                url = url.replace("ssl=require", "sslmode=require")
+            elif "sslmode=" not in url and ("neon.tech" in url or "amazonaws.com" in url or "render.com" in url):
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}sslmode=require"
             return url
         return (
             f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
@@ -97,9 +106,13 @@ class Settings(BaseSettings):
         )
 
     def get_redis_url(self) -> str:
-        """Returns the Redis connection URL."""
+        """Returns the Redis connection URL, auto-upgrading to rediss:// if Upstash or TLS is detected."""
         if self.REDIS_URL:
-            return self.REDIS_URL
+            url = self.REDIS_URL.strip()
+            # If user copied Upstash endpoint with redis:// instead of rediss://
+            if "upstash.io" in url and url.startswith("redis://"):
+                url = url.replace("redis://", "rediss://", 1)
+            return url
         if self.REDIS_PASSWORD:
             return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"

@@ -33,10 +33,29 @@ def log(msg: str):
 def run_migrations():
     """Runs Alembic database migrations to ensure PostgreSQL schema is up to date."""
     log("Running database migrations (alembic upgrade head)...")
+    possible_paths = [
+        backend_dir.parent / "alembic.ini",
+        backend_dir / "alembic.ini",
+        Path("alembic.ini").resolve(),
+    ]
+    ini_path = None
+    for p in possible_paths:
+        if p.exists():
+            ini_path = p
+            break
+
+    cmd = [sys.executable, "-m", "alembic"]
+    if ini_path:
+        cmd.extend(["-c", str(ini_path)])
+    cmd.extend(["upgrade", "head"])
+
+    cwd = ini_path.parent if ini_path else backend_dir
+    log(f"Executing: {' '.join(cmd)} (cwd: {cwd})")
+
     try:
         res = subprocess.run(
-            [sys.executable, "-m", "alembic", "upgrade", "head"],
-            cwd=str(backend_dir),
+            cmd,
+            cwd=str(cwd),
             check=True,
             capture_output=True,
             text=True,
@@ -45,7 +64,7 @@ def run_migrations():
             print(res.stdout.strip(), flush=True)
         log("Database schema migrations applied successfully.")
     except subprocess.CalledProcessError as err:
-        log(f"WARNING: Alembic migration failed: {err.stderr.strip() or err}")
+        log(f"WARNING: Alembic migration failed: {err.stderr.strip() or err.stdout.strip() or err}")
         log("Proceeding to start services (schema might already be initialized)...")
 
 

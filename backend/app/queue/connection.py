@@ -10,13 +10,19 @@ def get_redis_client() -> aioredis.Redis:
     """Returns the singleton Redis async client instance."""
     global _redis_client
     if _redis_client is None:
+        redis_url = settings.get_redis_url()
+        extra_kwargs = {}
+        if redis_url.startswith("rediss://"):
+            extra_kwargs["ssl_cert_reqs"] = "none"
+
         _redis_client = aioredis.from_url(
-            settings.get_redis_url(),
+            redis_url,
             encoding="utf-8",
             decode_responses=True,
             socket_timeout=5.0,
             socket_connect_timeout=10.0,
             retry_on_timeout=True,
+            **extra_kwargs,
         )
     return _redis_client
 

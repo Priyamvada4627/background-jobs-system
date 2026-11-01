@@ -1,6 +1,6 @@
 import { Job, JobListResponse, Schedule, SystemStats } from '../types';
 
-const BASE_URL = '';
+const BASE_URL = import.meta.env.VITE_API_URL || '';
 
 export async function fetchStats(): Promise<SystemStats> {
   const res = await fetch(`${BASE_URL}/stats`);

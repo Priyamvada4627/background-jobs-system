@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: background-job-backend
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python run_all.py"
+    healthCheckPath: "/health/ready"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false

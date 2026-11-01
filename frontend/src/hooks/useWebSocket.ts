@@ -8,10 +8,20 @@ export function useWebSocket(onEvent?: (event: WSEvent) => void) {
   const reconnectTimeoutRef = useRef<number | null>(null);
 
   const connect = useCallback(() => {
-    const loc = window.location;
-    const protocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = loc.port === '3000' ? 'localhost:8000' : loc.host;
-    const url = `${protocol}//${host}/ws`;
+    let url: string;
+    if (import.meta.env.VITE_WS_URL) {
+      url = import.meta.env.VITE_WS_URL;
+    } else if (import.meta.env.VITE_API_URL) {
+      const apiUrl = import.meta.env.VITE_API_URL;
+      const wsProtocol = apiUrl.startsWith('https://') ? 'wss://' : 'ws://';
+      const cleanHost = apiUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+      url = `${wsProtocol}${cleanHost}/ws`;
+    } else {
+      const loc = window.location;
+      const protocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = loc.port === '3000' ? 'localhost:8000' : loc.host;
+      url = `${protocol}//${host}/ws`;
+    }
 
     const ws = new WebSocket(url);
     socketRef.current = ws;

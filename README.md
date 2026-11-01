@@ -1,204 +1,249 @@
 # Background Job Management System
 
-A distributed, failure-resilient task queue and execution engine designed for reliable background job processing, atomic worker claiming, transactional outbox publishing, lease-based dead worker recovery, and real-time operational visibility.
-
----
+A distributed, failure-resilient task queue and execution engine designed for reliable background job processing. The system combines PostgreSQL durability, Redis-based coordination, transactional outbox publishing, lease-based worker recovery, and real-time operational visibility.
 
 ## 🚀 Key Capabilities
 
-- **Durable Source of Truth**: PostgreSQL durably tracks jobs, execution attempts, recurring cron schedules, and immutable audit trails.
-- **Fast Transient Coordination**: Redis delivers low-latency atomic queue popping, renewable worker leases, rate limiters, and scheduler leader locks.
-- **Transactional Outbox Pattern**: Commits jobs and outbox events in a single PostgreSQL transaction; a dedicated publisher streams them to Redis with zero data loss even during network partitions or Redis outages.
-- **Priority Queuing & Fairness**: Fast coordination via Redis with priority lanes (`HIGH`, `DEFAULT`, `LOW`) and 6:3:1 weighted fair scheduling to eliminate starvation.
-- **Worker Leases & Fencing Tokens**: Renewable worker leases with monotonic attempt fencing tokens to prevent zombie workers from overwriting fresher state.
-- **Automated Lease Reaper**: Automated recovery of abandoned tasks following worker crashes or network isolation.
-- **Retries with Exponential Backoff & Jitter**: Configurable retry policies with dead-letter queue (DLQ) containment and manual revival.
-- **Registered Task Handlers**: Safe execution of pre-registered Python task handlers with timeouts and cooperative cancellation support (no arbitrary client code execution).
-- **Delayed & Recurring Schedules**: Timezone-aware cron schedules with distributed leader locking via Redis.
-- **Real-Time Operational Visibility**:
-  - Live WebSocket event streaming (`/ws`).
-  - Prometheus metrics exporter (`GET /metrics`).
-  - Pre-configured Grafana dashboard in `infra/grafana/dashboards/`.
-  - Structured JSON logging formatter.
-  - Zero-dependency built-in operational web dashboard (`GET /dashboard`).
-  - Modular React + TypeScript frontend SPA in `frontend/`.
-
----
+- **Durable Source of Truth:** PostgreSQL stores jobs, execution attempts, recurring schedules, and audit events.
+- **Fast Transient Coordination:** Redis supports low-latency queue operations, worker leases, rate limiting, and scheduler leader locks.
+- **Transactional Outbox Pattern:** Stores jobs and outbox events in a single PostgreSQL transaction, enabling reliable delivery attempts to Redis.
+- **Priority Queuing and Fairness:** Supports `HIGH`, `DEFAULT`, and `LOW` priority lanes with a 6:3:1 weighted scheduling policy.
+- **Worker Leases and Fencing Tokens:** Uses renewable leases and attempt fencing tokens to protect against stale workers updating newer execution state.
+- **Automated Lease Reaper:** Detects abandoned work and recovers jobs after worker failures.
+- **Retries and Dead-Letter Queue:** Supports retry policies with exponential backoff and jitter, dead-letter queue (DLQ) handling, and manual revival.
+- **Registered Task Handlers:** Executes pre-registered Python handlers with timeouts and cooperative cancellation support, rather than arbitrary client-supplied code.
+- **Delayed and Recurring Jobs:** Supports timezone-aware cron schedules and distributed scheduler coordination.
+- **Operational Visibility:**
+  - Live WebSocket event streaming (`/ws`)
+  - Prometheus metrics (`/metrics`)
+  - Grafana dashboards
+  - Structured JSON logging
+  - Built-in operational dashboard (`/dashboard`)
+  - React and TypeScript frontend in `frontend/`
 
 ## 🏗️ Architecture
 
-```
-                      +-----------------------------+
-                      |   FastAPI REST / WS API     |
-                      |  - Job Ingestion (Outbox)   |
-                      |  - Live WebSocket Stream    |
-                      +--------------+--------------+
-                                     |
-               +---------------------+---------------------+
-               |                                           |
-               v                                           v
-    +--------------------+                       +-------------------+
-    |    PostgreSQL      |                       |       Redis       |
-    |  Durable Source of |                       | Transient Queues  |
-    |      Truth         |                       | & Lease Manager   |
-    +---------+----------+                       +---------+---------+
-              ^                                            ^
-              |                                            |
-    +---------+----------+                       +---------+---------+
-    |  Outbox Publisher  +---------------------->| Priority Queues   |
-    |  (Reliable Drain)  |                       | (6:3:1 Weighted)  |
-    +--------------------+                       +---------+---------+
-                                                           |
-                                                           v
-                                                 +-------------------+
-                                                 | Worker Engines    |
-                                                 | - Heartbeat Lease |
-                                                 | - Fencing Check   |
-                                                 +-------------------+
+```text
+                 +----------------------------+
+                 |       FastAPI API          |
+                 | REST / WebSocket / Metrics |
+                 +-------------+--------------+
+                               |
+                  +------------+------------+
+                  |                         |
+                  v                         v
+        +------------------+      +------------------+
+        |   PostgreSQL     |      |      Redis       |
+        | Durable Storage  |      | Queues and Leases|
+        +--------+---------+      +--------+---------+
+                 |                         ^
+                 v                         |
+        +------------------+               |
+        | Outbox Publisher |-------------->|
+        +------------------+      Priority Queues
+                                           |
+                                           v
+                                 +------------------+
+                                 | Worker Engines   |
+                                 | Execute and Retry|
+                                 +--------+---------+
+                                          |
+                                          v
+                                 +------------------+
+                                 | Lease Reaper and |
+                                 | Scheduler Daemons|
+                                 +------------------+
 ```
 
-Detailed specifications:
-- [Architecture & Invariants Document](docs/architecture.md)
-- [REST & WebSocket API Reference](docs/api.md)
-- [Operational Runbooks & Incident Response](docs/operations.md)
+### Documentation
+
+- [Architecture and Invariants](docs/architecture.md)
+- [REST and WebSocket API Reference](docs/api.md)
+- [Operational Runbooks and Incident Response](docs/operations.md)
 - [Phase-by-Phase Implementation Plan](docs/implementation-plan.md)
-
----
 
 ## ⚡ Quickstart
 
 ### 1. Prerequisites
-- Python 3.11+
-- Docker & Docker Compose (for PostgreSQL 16, Redis 7, Prometheus, and Grafana)
 
-### 2. Environment Configuration
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
+- Python 3.11 or later
+- Docker Desktop with Docker Compose
+- Git
+
+Docker Compose starts PostgreSQL 16, Redis 7, Prometheus, and Grafana.
+
+### 2. Configure Environment Variables
+
+Create a `.env` file in the project root, next to `.gitignore`. This project uses a local `.env` file rather than a committed `.env.example`.
+
+Add the following configuration, replacing the password placeholders with your chosen values:
+
+```dotenv
+# PostgreSQL
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_postgres_password
+POSTGRES_DB=job_system
+POSTGRES_PORT=5433
+
+# Redis
+REDIS_PORT=6379
+
+# Monitoring
+PROMETHEUS_PORT=9090
+GRAFANA_PORT=3001
+GRAFANA_ADMIN_PASSWORD=your_grafana_password
 ```
 
-### 3. Install Dependencies
-```bash
-# Activate virtual environment
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1    # On Windows PowerShell
-# source .venv/bin/activate     # On Linux / macOS
+Preserve any additional variables required by your application.
 
-# Install backend dependencies
+**Security:** Keep `.env` out of Git. Commit configuration templates only if they contain placeholders and no real credentials.
+
+### 3. Create a Virtual Environment and Install Dependencies
+
+Run these commands from the project root in Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
 pip install -e "./backend[dev]"
 ```
 
-### 4. Start Infrastructure Stack
-```bash
-docker compose -f infra/docker-compose.yml up -d
-```
-This launches:
-- **PostgreSQL 16**: `localhost:5432`
-- **Redis 7**: `localhost:6379`
-- **Prometheus**: `http://localhost:9090`
-- **Grafana**: `http://localhost:3001` (Credentials: `admin` / `admin`)
+If PowerShell blocks virtual environment activation, you can temporarily allow scripts in the current terminal:
 
-Apply database migrations:
-```bash
-cd backend
-alembic upgrade head
-cd ..
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
 ```
 
----
+### 4. Start the Infrastructure
+
+From the project root:
+
+```powershell
+docker compose --env-file .env -f infra/docker-compose.yml up -d
+```
+
+This starts the following services:
+
+| Service | Local address |
+|---|---|
+| PostgreSQL | `localhost:5433` |
+| Redis | `localhost:6379` |
+| Prometheus | [http://localhost:9090](http://localhost:9090) |
+| Grafana | [http://localhost:3001](http://localhost:3001) |
+
+PostgreSQL uses host port `5433`, mapped to port `5432` inside the container.
+
+Grafana's default username is `admin`. Its initial password is configured through `GRAFANA_ADMIN_PASSWORD` in `.env`. If Grafana has already initialized its persistent data volume, changing the environment variable alone will not reset its existing login password.
+
+### 5. Apply Database Migrations
+
+From the project root:
+
+```powershell
+$env:PYTHONPATH = "backend"
+python -m alembic -c backend/alembic.ini upgrade head
+```
+
+If your Alembic configuration uses a different location, use the configuration file present in your repository.
 
 ## 💻 Running System Components
 
-### 1. API Server & Dashboard
-```bash
-$env:PYTHONPATH="backend"
+Keep each long-running component in a separate terminal. Activate `.venv` in each terminal and run commands from the project root.
+
+Set the Python import path in each terminal:
+
+```powershell
+$env:PYTHONPATH = "backend"
+```
+
+### 1. API Server and Dashboard
+
+```powershell
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-- **Operational Web Dashboard**: [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
-- **Interactive OpenAPI Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs)
-- **Prometheus Metrics**: [http://localhost:8000/metrics](http://localhost:8000/metrics)
-- **System Health**: [http://localhost:8000/health/ready](http://localhost:8000/health/ready)
 
-### 2. Transactional Outbox Publisher Daemon
-```bash
-$env:PYTHONPATH="backend"
+Endpoints:
+
+- **Operational Dashboard:** [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
+- **Interactive API Documentation:** [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Prometheus Metrics:** [http://localhost:8000/metrics](http://localhost:8000/metrics)
+- **Readiness Check:** [http://localhost:8000/health/ready](http://localhost:8000/health/ready)
+
+### 2. Transactional Outbox Publisher
+
+```powershell
 python -m app.services.outbox_cli --poll-interval 0.5
 ```
 
-### 3. Worker Engine Processes
-```bash
-$env:PYTHONPATH="backend"
+The publisher polls pending outbox events and attempts to deliver them to the configured queue.
+
+### 3. Worker Engine
+
+```powershell
 python -m app.workers.cli --worker-id worker-1 --poll-interval 0.5
 ```
 
-### 4. Lease Reaper Daemon
-```bash
-$env:PYTHONPATH="backend"
+Workers claim and execute jobs using the registered task handlers.
+
+### 4. Lease Reaper
+
+```powershell
 python -m app.services.reaper_cli --poll-interval 5.0
 ```
 
-### 5. Cron & Periodic Scheduler
-```bash
-$env:PYTHONPATH="backend"
+The reaper checks for abandoned or expired worker leases and initiates recovery according to the configured job state transitions.
+
+### 5. Cron and Periodic Scheduler
+
+```powershell
 python -m app.scheduler.cli --poll-interval 1.0
 ```
 
----
+The scheduler checks for due recurring jobs and coordinates scheduling through the configured distributed locking mechanism.
 
 ## 📊 Performance Benchmarks
 
-Run the built-in asynchronous load generator and benchmark suite:
+Run the benchmark suite from the project root:
 
-```bash
-$env:PYTHONPATH="backend"
+```powershell
+$env:PYTHONPATH = "backend"
 python -m scripts.benchmark --jobs 200 --workers 4 --priority DEFAULT --task-type compute_hash
 ```
 
-Example Output:
-```
-===========================================================
-  BACKGROUND JOB SYSTEM - PERFORMANCE BENCHMARK
-===========================================================
-Target Jobs:    200
-Worker Count:   4
-Task Type:      compute_hash
-Priority:       DEFAULT
-===========================================================
+The benchmark can help evaluate:
 
-[*] Submitting 200 jobs...
-[+] Ingestion completed in 0.142s (1408.5 jobs/sec)
-[*] Spawning 4 concurrent worker engines...
-    Processed: 200/200 jobs (100%)...
+- Job submission throughput
+- Job processing throughput
+- Execution duration
+- Average and percentile latency, including p50, p90, p95, and p99
 
-===========================================================
-  BENCHMARK RESULTS SUMMARY
-===========================================================
-Submission Throughput:  1408.5 jobs/sec
-Processing Throughput:  312.4 jobs/sec
-Execution Duration:     0.640s
-Latencies (ms):
-  Min: 1 ms | Avg: 4.8 ms | Max: 19 ms
-  p50: 4 ms | p90: 9 ms | p95: 12 ms | p99: 18 ms
-===========================================================
-```
+Record actual results from your environment. Performance depends on hardware, workload, database configuration, worker concurrency, and infrastructure. Do not treat example figures as guaranteed throughput.
 
----
+## 🧪 Testing
 
-## 🧪 Test Suite
+Run the test suite from the project root with the virtual environment activated:
 
-The system includes comprehensive unit, integration, and chaos resilience tests:
-
-```bash
+```powershell
+$env:PYTHONPATH = "backend"
 pytest -v
 ```
 
-Test coverage includes:
-- **Unit**: Config, Health, Schemas, State Machine, Task Registry, Handlers, Retry Policy, Redis Priority Queue, Rate Limiter, Outbox Publisher, Metrics, Structured Logging.
-- **Integration**: Competing Workers, Jobs API, Schedules API, Cron Scheduler, Retry DLQ, Lease Reaper, WebSockets, System Stats, Benchmark Runner.
-- **Chaos Resilience**: Redis network partition & recovery, Worker hard crash & zombie fencing, High-concurrency competing worker burst.
+The project test plan covers the following areas, where implemented:
 
----
+- **Unit Tests:** Configuration, health checks, schemas, job state transitions, task registry, handlers, retry policies, queue operations, rate limiting, outbox publishing, metrics, and structured logging.
+- **Integration Tests:** Worker contention, jobs and schedules APIs, cron scheduling, retry and DLQ behavior, lease recovery, WebSockets, system statistics, and benchmark execution.
+- **Resilience Tests:** Redis interruption and recovery, worker crashes, stale-worker fencing, and high-concurrency worker contention.
+
+## 🔒 Security and Configuration
+
+- Never commit `.env`, credentials, or production secrets.
+- Use strong passwords for PostgreSQL and Grafana.
+- Keep the `.env` file excluded through `.gitignore`.
+- Use registered task handlers rather than executing arbitrary client-supplied code.
+- Restrict exposed service ports and configure authentication appropriately before deploying outside a trusted development environment.
 
 ## 📜 License
 
-MIT License. Designed as a production-minded educational task queue and distributed execution engine.
+MIT License. A production-minded educational project exploring durable background processing, distributed coordination, failure recovery, and operational observability.

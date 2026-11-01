@@ -3,7 +3,7 @@ from app.core.config import Settings
 
 
 def test_default_settings():
-    s = Settings()
+    s = Settings(_env_file=None)
     assert s.APP_NAME == "Background Job System"
     assert s.POSTGRES_PORT == 5432
     assert s.REDIS_PORT == 6379

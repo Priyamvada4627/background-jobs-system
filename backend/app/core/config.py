@@ -66,18 +66,31 @@ class Settings(BaseSettings):
         return v
 
     def get_database_url(self) -> str:
-        """Returns the async database URL, dynamically constructing it if not explicitly set."""
+        """Returns the async database URL, dynamically constructing or adapting it for asyncpg."""
         if self.DATABASE_URL:
-            return self.DATABASE_URL
+            url = self.DATABASE_URL
+            if url.startswith("postgres://"):
+                url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+            elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
+                url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            return url
         return (
             f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 
     def get_database_sync_url(self) -> str:
-        """Returns the sync database URL (for Alembic migrations), dynamically constructing if not set."""
-        if self.DATABASE_SYNC_URL:
-            return self.DATABASE_SYNC_URL
+        """Returns the sync database URL (for Alembic migrations), dynamically constructing or adapting for psycopg2."""
+        raw_url = self.DATABASE_SYNC_URL or self.DATABASE_URL
+        if raw_url:
+            url = raw_url
+            if url.startswith("postgres://"):
+                url = url.replace("postgres://", "postgresql+psycopg2://", 1)
+            elif url.startswith("postgresql+asyncpg://"):
+                url = url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
+            elif url.startswith("postgresql://") and not url.startswith("postgresql+psycopg2://"):
+                url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+            return url
         return (
             f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"

@@ -15,7 +15,7 @@ def get_engine() -> AsyncEngine:
         db_url = settings.get_database_url()
         connect_args = {}
         if "postgresql" in db_url:
-            connect_args["timeout"] = 3.0
+            connect_args["timeout"] = 10.0
 
         _engine = create_async_engine(
             db_url,

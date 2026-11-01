@@ -1,3 +1,4 @@
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -5,14 +6,16 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in your .env file}
       POSTGRES_DB: ${POSTGRES_DB:-job_system}
     ports:
       - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-job_system}"]
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
       interval: 5s
       timeout: 5s
       retries: 5
@@ -40,7 +43,7 @@ services:
     container_name: job_system_prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     networks:
@@ -51,10 +54,10 @@ services:
     container_name: job_system_grafana
     restart: unless-stopped
     ports:
-      - "3001:3000"
+      - "${GRAFANA_PORT:-3001}:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in your .env file}
+      GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafanadata:/var/lib/grafana
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro

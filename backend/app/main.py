@@ -36,6 +36,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def redirect_duplicate_slashes(request, call_next):
+    """Normalizes paths containing duplicate slashes (e.g. //stats -> /stats) via 307 redirect."""
+    if "//" in request.url.path:
+        import re
+        from starlette.responses import RedirectResponse
+        clean_path = re.sub(r"/+", "/", request.url.path)
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(url=f"{clean_path}{query}", status_code=307)
+    return await call_next(request)
+
 # Register main API router
 app.include_router(api_router)
 

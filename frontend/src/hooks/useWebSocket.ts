@@ -16,6 +16,8 @@ export function useWebSocket(onEvent?: (event: WSEvent) => void) {
       const wsProtocol = apiUrl.startsWith('https://') ? 'wss://' : 'ws://';
       const cleanHost = apiUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '');
       url = `${wsProtocol}${cleanHost}/ws`;
+    } else if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+      url = 'wss://background-jobs-system.onrender.com/ws';
     } else {
       const loc = window.location;
       const protocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';

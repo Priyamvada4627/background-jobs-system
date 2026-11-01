@@ -1,6 +1,9 @@
 import { Job, JobListResponse, Schedule, SystemStats } from '../types';
 
-const BASE_URL = import.meta.env.VITE_API_URL || '';
+const PROD_BACKEND_URL = 'https://background-jobs-system.onrender.com';
+const BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  (typeof window !== 'undefined' && window.location.hostname !== 'localhost' ? PROD_BACKEND_URL : '');
 
 export async function fetchStats(): Promise<SystemStats> {
   const res = await fetch(`${BASE_URL}/stats`);

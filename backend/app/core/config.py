@@ -68,15 +68,35 @@ class Settings(BaseSettings):
     def get_database_url(self) -> str:
         """Returns the async database URL, dynamically constructing or adapting it for asyncpg."""
         if self.DATABASE_URL:
-            url = self.DATABASE_URL.strip()
-            if url.startswith("postgres://"):
-                url = url.replace("postgres://", "postgresql+asyncpg://", 1)
-            elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
-                url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-            # asyncpg accepts ssl=..., NOT sslmode=...
-            # Neon and other providers include ?sslmode=require which throws TypeError in asyncpg
-            url = url.replace("sslmode=", "ssl=")
-            return url
+            url_str = self.DATABASE_URL.strip()
+            try:
+                from sqlalchemy.engine.url import make_url
+                parsed = make_url(url_str)
+                query = dict(parsed.query)
+
+                # asyncpg does NOT support libpq query params like channel_binding, sslmode, etc.
+                sslmode = query.pop("sslmode", None)
+                query.pop("channel_binding", None)
+                query.pop("target_session_attrs", None)
+                query.pop("gssencmode", None)
+
+                # If SSL was requested via sslmode or host is cloud, ensure ssl=require for asyncpg
+                if sslmode in ("require", "verify-ca", "verify-full") or "ssl" in query or "neon.tech" in (parsed.host or ""):
+                    query["ssl"] = "require"
+
+                drivername = "postgresql+asyncpg"
+                return parsed.set(drivername=drivername, query=query).render_as_string(hide_password=False)
+            except Exception:
+                url = url_str
+                if url.startswith("postgres://"):
+                    url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+                elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
+                    url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+                url = url.replace("sslmode=", "ssl=")
+                import re
+                url = re.sub(r"[?&]channel_binding=[^&]+", "", url)
+                url = re.sub(r"[?&]target_session_attrs=[^&]+", "", url)
+                return url
         return (
             f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
@@ -86,20 +106,30 @@ class Settings(BaseSettings):
         """Returns the sync database URL (for Alembic migrations), dynamically constructing or adapting for psycopg2."""
         raw_url = self.DATABASE_SYNC_URL or self.DATABASE_URL
         if raw_url:
-            url = raw_url.strip()
-            if url.startswith("postgres://"):
-                url = url.replace("postgres://", "postgresql+psycopg2://", 1)
-            elif url.startswith("postgresql+asyncpg://"):
-                url = url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
-            elif url.startswith("postgresql://") and not url.startswith("postgresql+psycopg2://"):
-                url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
-            # psycopg2 (Alembic) uses sslmode=..., NOT ssl=...
-            if "ssl=require" in url and "sslmode=" not in url:
-                url = url.replace("ssl=require", "sslmode=require")
-            elif "sslmode=" not in url and ("neon.tech" in url or "amazonaws.com" in url or "render.com" in url):
-                sep = "&" if "?" in url else "?"
-                url = f"{url}{sep}sslmode=require"
-            return url
+            url_str = raw_url.strip()
+            try:
+                from sqlalchemy.engine.url import make_url
+                parsed = make_url(url_str)
+                query = dict(parsed.query)
+
+                # For psycopg2 (Alembic), ensure sslmode=require
+                if "ssl" in query and "sslmode" not in query:
+                    ssl_val = query.pop("ssl")
+                    query["sslmode"] = ssl_val if ssl_val in ("require", "verify-ca", "verify-full") else "require"
+                elif "sslmode" not in query and ("neon.tech" in (parsed.host or "") or "render.com" in (parsed.host or "")):
+                    query["sslmode"] = "require"
+
+                drivername = "postgresql+psycopg2"
+                return parsed.set(drivername=drivername, query=query).render_as_string(hide_password=False)
+            except Exception:
+                url = url_str
+                if url.startswith("postgres://"):
+                    url = url.replace("postgres://", "postgresql+psycopg2://", 1)
+                elif url.startswith("postgresql+asyncpg://"):
+                    url = url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
+                elif url.startswith("postgresql://") and not url.startswith("postgresql+psycopg2://"):
+                    url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+                return url
         return (
             f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
